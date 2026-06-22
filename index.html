@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>手書きアニメーション</title>
+  <style>
+    @font-face {
+      font-family: 'Yuruka';
+      src: url('fonts/FOT-YurukaStd-UB.otf') format('opentype');
+      font-weight: normal;
+      font-style: normal;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #1a1a2e;
+      color: #eee;
+      font-family: 'Yuruka', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 24px 16px;
+      gap: 16px;
+    }
+
+    h1 {
+      font-size: 1.4rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      color: #a8d8ea;
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      justify-content: center;
+      background: #16213e;
+      padding: 12px 20px;
+      border-radius: 12px;
+      border: 1px solid #0f3460;
+    }
+
+    .tool-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    label { font-size: 0.8rem; color: #aaa; }
+
+    input[type=color] {
+      width: 36px;
+      height: 36px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      background: none;
+      padding: 2px;
+    }
+
+    input[type=range] {
+      width: 80px;
+      accent-color: #a8d8ea;
+    }
+
+    .size-preview {
+      width: 28px;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .dot {
+      background: white;
+      border-radius: 50%;
+      transition: width 0.1s, height 0.1s;
+    }
+
+    .divider {
+      width: 1px;
+      height: 32px;
+      background: #0f3460;
+    }
+
+    button {
+      padding: 8px 18px;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s, transform 0.1s;
+    }
+
+    button:hover { opacity: 0.85; }
+    button:active { transform: scale(0.97); }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .btn-clear  { background: #e74c3c; color: white; }
+    .btn-undo   { background: #555; color: white; }
+    .btn-preview { background: #2ecc71; color: #111; }
+    .btn-download { background: #a8d8ea; color: #111; }
+
+    .canvas-wrap {
+      position: relative;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+      /* checkerboard to show transparency */
+      background-image:
+        linear-gradient(45deg, #333 25%, transparent 25%),
+        linear-gradient(-45deg, #333 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, #333 75%),
+        linear-gradient(-45deg, transparent 75%, #333 75%);
+      background-size: 20px 20px;
+      background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+      background-color: #222;
+    }
+
+    canvas {
+      display: block;
+      cursor: crosshair;
+      touch-action: none;
+    }
+
+    .status {
+      font-size: 0.8rem;
+      color: #888;
+      min-height: 1.2em;
+      text-align: center;
+    }
+
+    .status.recording { color: #e74c3c; animation: blink 1s infinite; }
+    .status.success { color: #2ecc71; }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .speed-group { display: flex; align-items: center; gap: 8px; }
+  </style>
+</head>
+<body>
+
+<h1>✏️ 手書きアニメーション</h1>
+
+<div class="toolbar">
+  <div class="tool-group">
+    <label>色</label>
+    <input type="color" id="colorPicker" value="#ffffff">
+  </div>
+
+  <div class="divider"></div>
+
+  <div class="tool-group">
+    <label>太さ</label>
+    <input type="range" id="sizeSlider" min="1" max="40" value="6">
+    <div class="size-preview">
+      <div class="dot" id="dotPreview" style="width:6px;height:6px"></div>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <div class="tool-group">
+    <label>速度</label>
+    <input type="range" id="speedSlider" min="0.25" max="4" step="0.25" value="1">
+    <span id="speedLabel" style="font-size:0.8rem;color:#aaa;min-width:32px">1×</span>
+  </div>
+
+  <div class="divider"></div>
+
+  <button class="btn-undo" id="btnUndo">↩ 戻す</button>
+  <button class="btn-clear" id="btnClear">✕ 全消去</button>
+
+  <div class="divider"></div>
+
+  <button class="btn-preview" id="btnPreview">▶ プレビュー</button>
+  <button class="btn-download" id="btnDownload" disabled>⬇ ダウンロード</button>
+</div>
+
+<div class="canvas-wrap">
+  <canvas id="canvas" width="800" height="500"></canvas>
+</div>
+
+<div class="status" id="status">キャンバスに文字を書いてください</div>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const colorPicker = document.getElementById('colorPicker');
+const sizeSlider = document.getElementById('sizeSlider');
+const speedSlider = document.getElementById('speedSlider');
+const speedLabel = document.getElementById('speedLabel');
+const dotPreview = document.getElementById('dotPreview');
+const btnUndo = document.getElementById('btnUndo');
+const btnClear = document.getElementById('btnClear');
+const btnPreview = document.getElementById('btnPreview');
+const btnDownload = document.getElementById('btnDownload');
+const statusEl = document.getElementById('status');
+
+// Each stroke: { color, size, points: [{x, y, t}] }
+let strokes = [];
+let currentStroke = null;
+let isDrawing = false;
+let startTime = null;
+let lastVideoBlob = null;
+
+// --- Drawing ---
+
+function getPos(e) {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  const src = e.touches ? e.touches[0] : e;
+  return {
+    x: (src.clientX - rect.left) * scaleX,
+    y: (src.clientY - rect.top) * scaleY,
+  };
+}
+
+function onPointerDown(e) {
+  e.preventDefault();
+  isDrawing = true;
+  if (!startTime) startTime = performance.now();
+  const { x, y } = getPos(e);
+  const t = performance.now() - startTime;
+  currentStroke = {
+    color: colorPicker.value,
+    size: parseInt(sizeSlider.value),
+    points: [{ x, y, t }],
+  };
+  ctx.beginPath();
+  ctx.arc(x, y, currentStroke.size / 2, 0, Math.PI * 2);
+  ctx.fillStyle = currentStroke.color;
+  ctx.fill();
+}
+
+function onPointerMove(e) {
+  if (!isDrawing || !currentStroke) return;
+  e.preventDefault();
+  const { x, y } = getPos(e);
+  const t = performance.now() - startTime;
+  const prev = currentStroke.points[currentStroke.points.length - 1];
+  currentStroke.points.push({ x, y, t });
+
+  ctx.beginPath();
+  ctx.moveTo(prev.x, prev.y);
+  ctx.lineTo(x, y);
+  ctx.strokeStyle = currentStroke.color;
+  ctx.lineWidth = currentStroke.size;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.stroke();
+}
+
+function onPointerUp(e) {
+  if (!isDrawing) return;
+  isDrawing = false;
+  if (currentStroke && currentStroke.points.length > 0) {
+    strokes.push(currentStroke);
+    btnDownload.disabled = false;
+    updateStatus(`ストローク ${strokes.length} 本`);
+  }
+  currentStroke = null;
+}
+
+canvas.addEventListener('mousedown', onPointerDown);
+canvas.addEventListener('mousemove', onPointerMove);
+canvas.addEventListener('mouseup', onPointerUp);
+canvas.addEventListener('mouseleave', onPointerUp);
+canvas.addEventListener('touchstart', onPointerDown, { passive: false });
+canvas.addEventListener('touchmove', onPointerMove, { passive: false });
+canvas.addEventListener('touchend', onPointerUp);
+
+// --- Controls ---
+
+sizeSlider.addEventListener('input', () => {
+  const v = sizeSlider.value;
+  dotPreview.style.width = v + 'px';
+  dotPreview.style.height = v + 'px';
+});
+
+speedSlider.addEventListener('input', () => {
+  speedLabel.textContent = speedSlider.value + '×';
+});
+
+btnUndo.addEventListener('click', () => {
+  if (strokes.length === 0) return;
+  strokes.pop();
+  redrawAll();
+  if (strokes.length === 0) {
+    btnDownload.disabled = true;
+    startTime = null;
+    updateStatus('キャンバスに文字を書いてください');
+  } else {
+    updateStatus(`ストローク ${strokes.length} 本`);
+  }
+});
+
+btnClear.addEventListener('click', () => {
+  strokes = [];
+  currentStroke = null;
+  startTime = null;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  btnDownload.disabled = true;
+  lastVideoBlob = null;
+  updateStatus('キャンバスに文字を書いてください');
+});
+
+// --- Redraw ---
+
+function redrawAll() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  for (const stroke of strokes) {
+    drawStroke(ctx, stroke);
+  }
+}
+
+function drawStroke(c, stroke) {
+  const pts = stroke.points;
+  if (pts.length === 0) return;
+  c.beginPath();
+  c.arc(pts[0].x, pts[0].y, stroke.size / 2, 0, Math.PI * 2);
+  c.fillStyle = stroke.color;
+  c.fill();
+  if (pts.length > 1) {
+    c.beginPath();
+    c.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) {
+      c.lineTo(pts[i].x, pts[i].y);
+    }
+    c.strokeStyle = stroke.color;
+    c.lineWidth = stroke.size;
+    c.lineCap = 'round';
+    c.lineJoin = 'round';
+    c.stroke();
+  }
+}
+
+// --- Animation replay ---
+
+function replayStrokes(offscreen, speed, onDone) {
+  const c = offscreen.getContext('2d');
+  c.clearRect(0, 0, offscreen.width, offscreen.height);
+
+  if (strokes.length === 0) { onDone && onDone(); return; }
+
+  // Flatten all points with stroke index
+  const events = [];
+  for (let si = 0; si < strokes.length; si++) {
+    for (let pi = 0; pi < strokes[si].points.length; pi++) {
+      events.push({ si, pi, t: strokes[si].points[pi].t });
+    }
+  }
+  events.sort((a, b) => a.t - b.t);
+
+  const totalDuration = events[events.length - 1].t;
+  const startTs = performance.now();
+
+  // Per-stroke draw state
+  const drawn = strokes.map(() => 0); // how many points drawn per stroke
+
+  function drawUpTo(elapsed) {
+    const currentT = elapsed * speed;
+    c.clearRect(0, 0, offscreen.width, offscreen.height);
+
+    for (let si = 0; si < strokes.length; si++) {
+      const stroke = strokes[si];
+      const pts = stroke.points;
+      // find how many points to draw
+      let count = 0;
+      for (let pi = 0; pi < pts.length; pi++) {
+        if (pts[pi].t <= currentT) count = pi + 1;
+        else break;
+      }
+      if (count === 0) continue;
+
+      c.beginPath();
+      c.arc(pts[0].x, pts[0].y, stroke.size / 2, 0, Math.PI * 2);
+      c.fillStyle = stroke.color;
+      c.fill();
+
+      if (count > 1) {
+        c.beginPath();
+        c.moveTo(pts[0].x, pts[0].y);
+        for (let pi = 1; pi < count; pi++) {
+          c.lineTo(pts[pi].x, pts[pi].y);
+        }
+        c.strokeStyle = stroke.color;
+        c.lineWidth = stroke.size;
+        c.lineCap = 'round';
+        c.lineJoin = 'round';
+        c.stroke();
+      }
+    }
+  }
+
+  function frame() {
+    const elapsed = performance.now() - startTs;
+    drawUpTo(elapsed);
+    if (elapsed * speed < totalDuration + 200) {
+      requestAnimationFrame(frame);
+    } else {
+      // draw final full state
+      c.clearRect(0, 0, offscreen.width, offscreen.height);
+      for (const stroke of strokes) drawStroke(c, stroke);
+      onDone && onDone();
+    }
+  }
+  requestAnimationFrame(frame);
+}
+
+// --- Preview ---
+
+btnPreview.addEventListener('click', () => {
+  if (strokes.length === 0) return;
+  const speed = parseFloat(speedSlider.value);
+
+  // replay on main canvas
+  const c = ctx;
+  c.clearRect(0, 0, canvas.width, canvas.height);
+
+  const events = buildEvents();
+  if (!events.length) return;
+  const totalDuration = events[events.length - 1].t;
+  const startTs = performance.now();
+
+  setUIEnabled(false);
+  updateStatus('▶ プレビュー再生中...');
+
+  function frame() {
+    const elapsed = performance.now() - startTs;
+    const currentT = elapsed * speed;
+    c.clearRect(0, 0, canvas.width, canvas.height);
+
+    for (let si = 0; si < strokes.length; si++) {
+      const stroke = strokes[si];
+      const pts = stroke.points;
+      let count = 0;
+      for (let pi = 0; pi < pts.length; pi++) {
+        if (pts[pi].t <= currentT) count = pi + 1;
+        else break;
+      }
+      if (count === 0) continue;
+
+      c.beginPath();
+      c.arc(pts[0].x, pts[0].y, stroke.size / 2, 0, Math.PI * 2);
+      c.fillStyle = stroke.color;
+      c.fill();
+
+      if (count > 1) {
+        c.beginPath();
+        c.moveTo(pts[0].x, pts[0].y);
+        for (let pi = 1; pi < count; pi++) {
+          c.lineTo(pts[pi].x, pts[pi].y);
+        }
+        c.strokeStyle = stroke.color;
+        c.lineWidth = stroke.size;
+        c.lineCap = 'round';
+        c.lineJoin = 'round';
+        c.stroke();
+      }
+    }
+
+    if (currentT < totalDuration + 300) {
+      requestAnimationFrame(frame);
+    } else {
+      redrawAll();
+      setUIEnabled(true);
+      updateStatus('プレビュー完了 ✓', 'success');
+    }
+  }
+  requestAnimationFrame(frame);
+});
+
+// --- Export ---
+
+function buildEvents() {
+  const events = [];
+  for (let si = 0; si < strokes.length; si++) {
+    for (let pi = 0; pi < strokes[si].points.length; pi++) {
+      events.push({ si, pi, t: strokes[si].points[pi].t });
+    }
+  }
+  events.sort((a, b) => a.t - b.t);
+  return events;
+}
+
+btnDownload.addEventListener('click', async () => {
+  if (strokes.length === 0) return;
+
+  const speed = parseFloat(speedSlider.value);
+  const events = buildEvents();
+  const totalDuration = events[events.length - 1].t / speed;
+
+  setUIEnabled(false);
+  updateStatus('● 動画を生成中...', 'recording');
+
+  // Offscreen canvas for recording
+  const off = document.createElement('canvas');
+  off.width = canvas.width;
+  off.height = canvas.height;
+  const oc = off.getContext('2d');
+
+  const stream = off.captureStream(60);
+  const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+    ? 'video/webm;codecs=vp9'
+    : 'video/webm';
+  const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 8_000_000 });
+  const chunks = [];
+  recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+
+  recorder.onstop = () => {
+    const blob = new Blob(chunks, { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `handwriting_${Date.now()}.webm`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setUIEnabled(true);
+    redrawAll();
+    updateStatus('ダウンロード完了 ✓', 'success');
+  };
+
+  recorder.start();
+
+  // Replay on offscreen
+  const startTs = performance.now();
+
+  function frame() {
+    const elapsed = performance.now() - startTs;
+    const currentT = elapsed * speed;
+    oc.clearRect(0, 0, off.width, off.height);
+
+    for (let si = 0; si < strokes.length; si++) {
+      const stroke = strokes[si];
+      const pts = stroke.points;
+      let count = 0;
+      for (let pi = 0; pi < pts.length; pi++) {
+        if (pts[pi].t <= currentT) count = pi + 1;
+        else break;
+      }
+      if (count === 0) continue;
+
+      oc.beginPath();
+      oc.arc(pts[0].x, pts[0].y, stroke.size / 2, 0, Math.PI * 2);
+      oc.fillStyle = stroke.color;
+      oc.fill();
+
+      if (count > 1) {
+        oc.beginPath();
+        oc.moveTo(pts[0].x, pts[0].y);
+        for (let pi = 1; pi < count; pi++) {
+          oc.lineTo(pts[pi].x, pts[pi].y);
+        }
+        oc.strokeStyle = stroke.color;
+        oc.lineWidth = stroke.size;
+        oc.lineCap = 'round';
+        oc.lineJoin = 'round';
+        oc.stroke();
+      }
+    }
+
+    if (elapsed < totalDuration + 500) {
+      requestAnimationFrame(frame);
+    } else {
+      // final frame — full drawing
+      oc.clearRect(0, 0, off.width, off.height);
+      for (const stroke of strokes) drawStroke(oc, stroke);
+      setTimeout(() => recorder.stop(), 200);
+    }
+  }
+  requestAnimationFrame(frame);
+});
+
+// --- Helpers ---
+
+function setUIEnabled(enabled) {
+  btnClear.disabled = !enabled;
+  btnUndo.disabled = !enabled;
+  btnPreview.disabled = !enabled;
+  btnDownload.disabled = !enabled;
+  canvas.style.pointerEvents = enabled ? 'auto' : 'none';
+}
+
+function updateStatus(msg, type = '') {
+  statusEl.textContent = msg;
+  statusEl.className = 'status ' + type;
+}
+</script>
+</body>
+</html>
